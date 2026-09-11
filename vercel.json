@@ -1,0 +1,10 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/analyze.py": {
+      "runtime": "python3.12",
+      "includeFiles": "api/road_impact.py;api/suncheon_network.json"
+    }
+  }
+}
