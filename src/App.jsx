@@ -4,6 +4,9 @@ import "./style.css";
 const POLL_MS = 2500;
 const MAX_POLLS = 60;
 
+const AGENT_POLL_MS = 2500;
+const MAX_AGENT_POLLS = 480;
+
 export default function App() {
   const [place, setPlace] = useState("");
   const [loading, setLoading] = useState(false);
@@ -14,6 +17,13 @@ export default function App() {
   const [lng, setLng] = useState("");
   const [addr, setAddr] = useState("");
   const [mapError, setMapError] = useState("");
+
+  // 에이전트(LLM 질문) 상태
+  const [agentQuestion, setAgentQuestion] = useState("");
+  const [agentPending, setAgentPending] = useState(false);
+  const [agentJobId, setAgentJobId] = useState(null);
+  const [agentStatus, setAgentStatus] = useState(null);
+  const [agentResult, setAgentResult] = useState(null);
 
   const mapRef = useRef(null);
 
@@ -168,6 +178,106 @@ export default function App() {
     }
   };
 
+  const askAgent = async () => {
+    const question = agentQuestion.trim();
+    if (!question) {
+      setError("Solar에게 할 질문을 입력해 주세요.");
+      return;
+    }
+    if (!place.trim() && !(lat && lng)) {
+      setError("지명이나 지도 위치를 먼저 입력해 주세요.");
+      return;
+    }
+
+    setAgentPending(true);
+    setError("");
+    setAgentStatus(null);
+    setAgentResult(null);
+    setAgentJobId(null);
+
+    try {
+      const body = { question };
+      if (lat && lng) {
+        body.place = addr || `${lat}, ${lng}`;
+        body.lat = parseFloat(lat);
+        body.lng = parseFloat(lng);
+      } else {
+        body.place = place.trim();
+      }
+
+      const res = await fetch("/api/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok || !json) {
+        setError(json?.error || `에이전트 요청 실패(상태: ${res.status}).`);
+        setAgentPending(false);
+        return;
+      }
+
+      if (json.agent_job_id) {
+        setAgentJobId(json.agent_job_id);
+        setAgentStatus("queued");
+        return;
+      }
+
+      setError("예기치 않은 응답입니다.");
+      setAgentPending(false);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError("서버 연결 중 오류가 발생했습니다: " + msg);
+      setAgentPending(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!agentPending || !agentJobId) return;
+    const timer = setInterval(() => {
+      let cancelled = false;
+      fetch(`/api/agent/${agentJobId}`)
+        .then((r) => r.json())
+        .then((json) => {
+          if (cancelled) return;
+          setAgentStatus(json?.status || "unknown");
+          if (json?.status === "done") {
+            setAgentResult({
+              agent_job_id: json.agent_job_id,
+              engine_job_id: json.engine_job_id,
+              place: json.place || "",
+              bbox: json.bbox || [],
+              question: json.question || "",
+              reply: json.reply || null,
+              reply_error: json.reply_error || null,
+              markdown: json.markdown || "",
+            });
+            setAgentPending(false);
+            clearInterval(timer);
+            return;
+          }
+          if (json?.status === "error") {
+            setError(json.error || "에이전트 처리 중 오류가 발생했습니다.");
+            setAgentPending(false);
+            clearInterval(timer);
+            return;
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setError("에이전트 결과 확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
+            setAgentPending(false);
+          }
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, AGENT_POLL_MS);
+
+    return () => clearInterval(timer);
+  }, [agentPending, agentJobId]);
+
   useEffect(() => {
     if (!polling || !jobId) return;
     const timer = setInterval(() => {
@@ -310,6 +420,63 @@ export default function App() {
           {loading ? "분석 중…" : "분석하기"}
         </button>
         {error && <div className="error">{error}</div>}
+      </section>
+
+      <section className="agent-card">
+        <div className="agent-row">
+          <input
+            className="input agent-input"
+            placeholder="Solar에게 질문 예: 어디를 먼저 바꾸면 가장 효과가 큰가요?"
+            value={agentQuestion}
+            onChange={(e) => setAgentQuestion(e.target.value)}
+            disabled={agentPending || loading}
+          />
+          <button
+            className="btn-secondary"
+            onClick={askAgent}
+            disabled={agentPending || loading}
+          >
+            {agentPending ? "대기 중…" : "Solar에게 질문"}
+          </button>
+        </div>
+        {agentStatus === "queued" && (
+          <div className="status-wait">분석 요청을 보냈습니다. 결과를 기다리는 중...</div>
+        )}
+        {agentResult && (
+          <div className="agent-result">
+            <div className="agent-head">
+              <h3>Solar 응답 (근거: engine job_id {agentResult.engine_job_id})</h3>
+              <span className="meta">
+                {agentResult.bbox?.[0] !== undefined
+                  ? `위경도 ${agentResult.bbox[0]}°, ${agentResult.bbox[1]}° / ${agentResult.bbox[2]}°, ${agentResult.bbox[3]}°`
+                  : agentResult.place}
+              </span>
+            </div>
+            <div className="agent-q"><strong>사용자 질문:</strong> {agentResult.question}</div>
+            {agentResult.reply_error ? (
+              <div className="error">{agentResult.reply_error}</div>
+            ) : agentResult.reply ? (
+              <div className="agent-body">
+                <h4>한 줄 요약</h4>
+                <p>{agentResult.reply.summary}</p>
+                <h4>근거</h4>
+                <ul>
+                  {agentResult.reply.evidence.map((e, i) => (
+                    <li key={i}>
+                      <strong>{e.from_table}</strong>: {e.value}
+                    </li>
+                  ))}
+                </ul>
+                <h4>해석 주의</h4>
+                <p>{agentResult.reply.note}</p>
+              </div>
+            ) : null}
+            <div className="agent-meta">
+              이 응답의 수치는 엔진 보고서(engine job_id {agentResult.engine_job_id})에서만 왔으며,
+              Solar는 수치를 바꾸거나 새로 만들지 않았다.
+            </div>
+          </div>
+        )}
       </section>
 
       {(result ||
