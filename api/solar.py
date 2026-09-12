@@ -9,6 +9,7 @@ Solar Pro 4 Chat Completions 클라이언트 (OpenAI 호환)
 - 구조화 출력: response_format json_schema + strict:true
   (strict:true, additionalProperties:false(모든 객체), required에 전 프로퍼티)
 - 응답 JSON은 choices[0].message.content 문자열. finish_reason=length면 잘린 것.
+- 도구 결과 메시지는 docs 예시처럼 role: tool + name + tool_call_id로 전달.
 
 실장은 표준 라이브러리만 사용한다.
 """
@@ -17,11 +18,10 @@ import os
 import urllib.request
 import urllib.error
 import logging
-import time
 
 LOG = logging.getLogger("solar")
 
-API_URL = os.environ.get("UPSTAGE_CHAT_URL", "https://api.upstage.ai/v1/chat/completions")
+API_URL = "https://api.upstage.ai/v1/chat/completions"
 MODEL = "solar-pro4"
 
 # 도구 정의 (docs 방식)
@@ -129,7 +129,7 @@ def chat_completion(
     """
     Solar Chat Completions 단일 턴.
 
-    - tools/organization: docs 방식 tool calling
+    - tools: docs 방식 tool calling
     - response_format: docs 방식 구조화 출력 (json_schema + strict)
 
     반환: {"error": ...} 또는 {"choices": [...], ...}
@@ -226,7 +226,6 @@ def structured_reply(job_id: str, markdown: str, question: str) -> dict:
     if "error" in resp:
         return {"ok": False, "error": resp["error"]}
 
-    # finish_reason 검사 (docs: length면 잘린 JSON)
     choices = resp.get("choices", [])
     if not choices:
         return {"ok": False, "error": "Solar 응답에 choices가 없습니다.", "raw": resp}
@@ -262,8 +261,9 @@ def tool_roundtrip(place: str, question: str, markdown: str, job_id: str) -> dic
 
     문서 예시 흐름:
     1) 첫 호출: tools + tool_choice 전달
-    2) tool_call 수신 → 서버 측에서 정리(job_id/markdown/question)
-    3) 두 번째 호출: messages + [assistant 메시지, tool 결과]만 전달 (tools 재전달 안 함)
+    2) tool_call 수신 → 서버 측에서 실행 결과 정리(job_id/markdown/question)
+    3) 두 번째 호출: messages + [assistant 메시지, tool 결과] 전달
+       tool 결과 메시지는 docs 예시처럼 role: tool + name + tool_call_id로 전달
     4) 최종 텍스트 응답 반환
 
     실패 시 error dict를 반환한다. 이 경로는 주 경로가 아니며,
@@ -333,6 +333,7 @@ def tool_roundtrip(place: str, question: str, markdown: str, job_id: str) -> dic
             })
         return json.dumps({"error": f"알 수 없는 도구: {name}"})
 
+    # docs 예시: tool 결과 메시지는 role: tool, name, tool_call_id을 포함한다
     result_msg = {
         "role": "tool",
         "tool_call_id": call_id,
@@ -340,7 +341,6 @@ def tool_roundtrip(place: str, question: str, markdown: str, job_id: str) -> dic
         "content": _tool_result_content(),
     }
 
-    # 문서 예시: 두 번째 호출은 messages + [assistant, tool_result]만 전달
     second = chat_completion(
         messages + [msg, result_msg],
         timeout=30.0,

@@ -8,15 +8,13 @@
   engine job_id, markdown을 함께 반환한다.
 
 제약:
-- 모델: upstage/solar-pro4 (하나만)
+- 모델: solar-pro4 (하나만, api/solar.py의 MODEL과 동일 문자열)
 - Solar 호출은 서버 /api에서만, 키는 UPSTAGE_API_KEY(서버 환경변수)만
 - 엔진(api/road_impact.py)과 suncheon_network.json은 수정하지 않는다
 - 엔진 출력이 유일한 수치 근거. LLM은 설명·구조화만 하고 수치를 바꾸지 않는다
 - LLM 호출 실패/타임아웃 시 엔진 결과만으로 정상 동작해야 한다
 
-참고: 첨부 예정이었던 upstage-api-docs.zip은 이번 세션에서 디스크 상 위치를 찾지 못했다.
-대신 사용자 메시지에 명시된 방식(OpenAI 호환 /v1/chat/completions, tools/tool_choice,
-response_format json_schema + strict)을 따른다.
+엔드포인트는 기존 분석 Flask 앱(analyze.app)에 직접 레지스터한다.
 """
 import json
 import os
@@ -25,21 +23,12 @@ import time
 import uuid
 from pathlib import Path
 
-from flask import Flask, request, jsonify
+from flask import request, jsonify
 
-from analyze import (
-    app as engine_app,   # 기존 Flask 앱(재사용하지 않고 라우트만 참고 가능)
-    _bboxes_overlap,
-    SUNCHOON_BBOX,
-    _start_job,
-    _save_job,
-    _load_job,
-    geocode,
-    JOBS_DIR,
-)
+import analyze
+from analyze import _bboxes_overlap, SUNCHOON_BBOX, _start_job, _save_job, _load_job, geocode
 
-# 이 모듈은 분석 앱(process)에서 engine_app과 같은 프로세스로 로드됐다고 가정한다.
-# 별도 프로세스/서버가 아니라 기존 Flask 앱의 추가 블루프린트처럼 쓴다.
+app = analyze.app
 
 AGENT_DIR = Path("/tmp/oneway_agent_jobs")
 AGENT_DIR.mkdir(parents=True, exist_ok=True)
@@ -99,7 +88,7 @@ def _engine_job_for_place(place, lat=None, lng=None):
     return job_id, list(bbox), place_str
 
 
-def _wait_for_engine(job_id, agent_job_id, error_state):
+def _wait_for_engine(job_id, agent_job_id):
     """engine job 완료까지 폴링하고 결과를 agent 상태에 저장."""
     try:
         for _ in range(MAX_AGENT_POLLS):
@@ -130,7 +119,6 @@ def _wait_for_engine(job_id, agent_job_id, error_state):
                 })
                 return
             time.sleep(POLL_MS / 1000.0)
-        # 타임아웃
         _save_agent(agent_job_id, {
             "status": "error",
             "error": "엔진 분석이 정해진 시간 안에 끝나지 않았습니다.",
@@ -149,7 +137,6 @@ def _run_solar(agent_job_id, markdown, job_id, question):
     try:
         import solar
     except Exception as exc:
-        # solar 모듈 로딩 실패도 'LLM 없음'으로 간주하고 엔진 결과만 남긴다
         _save_agent(agent_job_id, {
             "status": "done",
             "engine_job_id": job_id,
@@ -188,7 +175,6 @@ def _run_solar(agent_job_id, markdown, job_id, question):
         return
 
     reply = got["reply"]
-    # 응답에 job_id가 없으면 채운다
     if isinstance(reply, dict):
         reply.setdefault("job_id", job_id)
     _save_agent(agent_job_id, {
@@ -250,7 +236,7 @@ def agent_start():
     })
 
     def _run():
-        _wait_for_engine(job_id, agent_job_id, None)
+        _wait_for_engine(job_id, agent_job_id)
         st = _load_agent(agent_job_id)
         if st and st.get("status") == "engine_done":
             md = st.get("markdown", "")
@@ -303,7 +289,6 @@ def agent_status(agent_job_id):
         out["markdown"] = st.get("markdown", "")
         out["reply_error"] = st.get("reply_error")
     else:
-        # queued / engine_done(아직 LLM 미완료) 등은 진행 중
         out["status_detail"] = status
 
     return (
@@ -311,8 +296,3 @@ def agent_status(agent_job_id):
         200,
         {"Content-Type": "application/json; charset=utf-8"},
     )
-
-
-# 기존 엔드포인트(Agent 환경에서 필요 시)와 충돌하지 않도록,
-# 이 모듈은 import 시점에 routes를 engine_app에 추가한다.
-# 실제 배포 시 app 객체는 engine_app과 동일 프로세스여야 한다.
