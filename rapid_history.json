@@ -1,0 +1,29 @@
+[
+  {
+    "task_id": "rapid-1789363231",
+    "status": "no_invocations",
+    "message": "UPSTAGE_API_KEY 환경변수가 설정되지 않아 Solar API를 호출할 수 없습니다."
+  },
+  {
+    "task_id": "rapid-1789363336",
+    "status": "error",
+    "stop_reason": "api_error",
+    "model": "upstage/solar-pro4",
+    "api_endpoint": "https://api.upstage.ai/v1/chat/completions",
+    "invocations": 3,
+    "successful_invocations": 0,
+    "last_http_status": null,
+    "last_error": "HTTP 400: {\"error\":{\"message\":\"The requested model is invalid or no longer supported. You can find the list of available models on our models page at https://console.upstage.ai/docs/models.\",\"type\":\"invalid_request_error\",\"param\":\"\",\"code\":\"invalid_request_body\"}}",
+    "message": "Solar API 호출 실패: HTTP 400: {\"error\":{\"message\":\"The requested model is invalid or no longer supported. You can find the list of available models on our models page at https://console.upstage.ai/docs/models.\",\"type\":\"invalid_request_error\",\"param\":\"\",\"code\":\"invalid_request_body\"}}",
+    "structured": null,
+    "total_prompt_tokens": 0,
+    "total_completion_tokens": 0,
+    "total_tokens": 0,
+    "timing_seconds": 0.36
+  },
+  {
+    "task_id": "rapid-1789363729",
+    "status": "no_invocations",
+    "message": "UPSTAGE_API_KEY 환경변수가 설정되지 않아 Solar API를 호출할 수 없습니다."
+  }
+]
