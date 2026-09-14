@@ -276,6 +276,7 @@ def _run_solar(agent_job_id, markdown, job_id, question, oneway_designations):
             "bbox": _load_agent(agent_job_id).get("bbox", []),
             "reply": None,
             "reply_error": f"Solar 모듈 로딩 실패(LLM 미사용): {exc}",
+            "oneway_designations": oneway_designations if isinstance(oneway_designations, dict) else {"count": 0, "items": []},
         })
         return
 
@@ -289,10 +290,11 @@ def _run_solar(agent_job_id, markdown, job_id, question, oneway_designations):
             "bbox": _load_agent(agent_job_id).get("bbox", []),
             "reply": None,
             "reply_error": "UPSTAGE_API_KEY가 설정돼 있지 않아 Solar 응답을 만들지 않았습니다. 엔진 결과만 표시됩니다.",
+            "oneway_designations": oneway_designations if isinstance(oneway_designations, dict) else {"count": 0, "items": []},
         })
         return
 
-    got = solar.structured_reply(job_id, markdown, question)
+    got = solar.structured_reply(job_id, enhanced_md, question)
     if not got.get("ok"):
         _save_agent(agent_job_id, {
             "status": "done",
@@ -302,6 +304,7 @@ def _run_solar(agent_job_id, markdown, job_id, question, oneway_designations):
             "bbox": _load_agent(agent_job_id).get("bbox", []),
             "reply": None,
             "reply_error": got.get("error", "Solar 응답 생성 실패"),
+            "oneway_designations": oneway_designations if isinstance(oneway_designations, dict) else {"count": 0, "items": []},
         })
         return
 
@@ -316,6 +319,7 @@ def _run_solar(agent_job_id, markdown, job_id, question, oneway_designations):
         "bbox": _load_agent(agent_job_id).get("bbox", []),
         "reply": reply,
         "reply_error": None,
+        "oneway_designations": oneway_designations if isinstance(oneway_designations, dict) else {"count": 0, "items": []},
     })
 
 

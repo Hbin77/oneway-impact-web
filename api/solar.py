@@ -223,7 +223,7 @@ def structured_reply(job_id: str, markdown: str, question: str) -> dict:
             "type": "json_schema",
             "json_schema": RESPONSE_SCHEMA,
         },
-        timeout=30.0,
+        timeout=90.0,
     )
     if "error" in resp:
         return {"ok": False, "error": resp["error"]}
@@ -297,7 +297,7 @@ def tool_roundtrip(place: str, question: str, markdown: str, job_id: str) -> dic
         messages,
         tools=TOOLS,
         tool_choice="required",
-        timeout=30.0,
+        timeout=90.0,
     )
     if "error" in first:
         return {"error": first["error"]}
@@ -345,7 +345,7 @@ def tool_roundtrip(place: str, question: str, markdown: str, job_id: str) -> dic
 
     second = chat_completion(
         messages + [msg, result_msg],
-        timeout=30.0,
+        timeout=90.0,
     )
     if "error" in second:
         return {"error": second["error"]}
