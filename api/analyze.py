@@ -394,10 +394,9 @@ def analyze():
             {"Content-Type": "application/json; charset=utf-8"},
         )
 
-    lat_f, lng_f = loc
+    lat_f, lng_f, address = loc
     # 지오코딩 결과 주소 문자열을 함께 저장해 두고, 엔진 완료 후 별도 스레드에서
     # (시도, 시군구) 추출 → 공식 지정 현황 조회에 사용한다.
-    _, _, address = _google_geocode(place)
     bbox = (lat_f - 0.015, lng_f - 0.015, lat_f + 0.015, lng_f + 0.015)
     use_cache = _bboxes_overlap(bbox, SUNCHOON_BBOX)
     job_id = uuid.uuid4().hex

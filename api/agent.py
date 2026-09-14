@@ -80,11 +80,10 @@ def _engine_job_for_place(place, lat=None, lng=None):
     loc = geocode(place_str)
     if loc is None:
         return None
-    lat_f, lng_f = loc
+    lat_f, lng_f, address = loc
     bbox = (lat_f - 0.015, lng_f - 0.015, lat_f + 0.015, lng_f + 0.015)
     use_cache = _bboxes_overlap(bbox, SUNCHOON_BBOX)
     job_id = uuid.uuid4().hex
-    _, _, address = _google_geocode(place_str) or ("", "", "")
     _save_job(job_id, {"status": "queued", "place": place_str, "bbox": list(bbox), "address": address})
     _start_job(job_id, {"bbox": list(bbox), "place": place_str, "address": address}, use_cache)
     return job_id, list(bbox), place_str, address
