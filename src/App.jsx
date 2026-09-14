@@ -1,644 +1,713 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import "./style.css";
 
-const POLL_MS = 2500;
-const MAX_POLLS = 60;
+const HOST = "https://" + window.location.hostname;
+const API = HOST + ":9001";
 
-const AGENT_POLL_MS = 2500;
-const MAX_AGENT_POLLS = 480;
+const RESULT_CARDS = [
+  {
+    key: "head",
+    title: "위치 확인",
+    render: (r) => (
+      <>
+        {r.bbox ? (
+          <div className="card-row">
+            <span className="card-label">경계 상자</span>
+            <span className="card-value">
+              ({r.bbox[0].toFixed(5)}, {r.bbox[1].toFixed(5)}) ~ (
+              {r.bbox[2].toFixed(5)}, {r.bbox[3].toFixed(5)})
+            </span>
+          </div>
+        ) : null}
+        {r.address ? (
+          <div className="card-row">
+            <span className="card-label">추정 주소</span>
+            <span className="card-value">{r.address}</span>
+          </div>
+        ) : null}
+        {r.place ? (
+          <div className="card-row">
+            <span className="card-label">검색어</span>
+            <span className="card-value">{r.place}</span>
+          </div>
+        ) : null}
+      </>
+    ),
+  },
+  {
+    key: "roadCount",
+    title: "분석 대상 도로",
+    render: (r) =>
+      r.roadCount != null ? (
+        <div className="card-row">
+          <span className="card-label">도로 수</span>
+          <span className="card-value">{r.roadCount}개</span>
+        </div>
+      ) : null,
+  },
+  {
+    key: "blockCount",
+    title: "통행 제한 블록",
+    render: (r) =>
+      r.blockCount != null ? (
+        <div className="card-row">
+          <span className="card-label">블록 수</span>
+          <span className="card-value">{r.blockCount}개</span>
+        </div>
+      ) : null,
+  },
+  {
+    key: "linkCount",
+    title: "연결 교차로",
+    render: (r) =>
+      r.linkCount != null ? (
+        <div className="card-row">
+          <span className="card-label">교차로 수</span>
+          <span className="card-value">{r.linkCount}개</span>
+        </div>
+      ) : null,
+  },
+  {
+    key: "avgWidth",
+    title: "평균 도로 폭",
+    render: (r) =>
+      r.avgWidth != null ? (
+        <div className="card-row">
+          <span className="card-label">평균 폭</span>
+          <span className="card-value">{r.avgWidth.toFixed(1)}m</span>
+        </div>
+      ) : null,
+  },
+  {
+    key: "totalLength",
+    title: "총 도로 연장",
+    render: (r) =>
+      r.totalLength != null ? (
+        <div className="card-row">
+          <span className="card-label">총 연장</span>
+          <span className="card-value">{r.totalLength.toFixed(0)}m</span>
+        </div>
+      ) : null,
+  },
+  {
+    key: "onewayRatio",
+    title: "일방통행 전환 비율",
+    render: (r) =>
+      r.onewayRatio != null ? (
+        <div className="card-row">
+          <span className="card-label">전환 대상 비율</span>
+          <span className="card-value">
+            {r.onewayRatio.toFixed(1)}% (도로 수 기준)
+          </span>
+        </div>
+      ) : null,
+  },
+];
 
-export default function App() {
-  const [place, setPlace] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState("");
-  const [markdown, setMarkdown] = useState("");
-  const [lat, setLat] = useState("");
-  const [lng, setLng] = useState("");
-  const [addr, setAddr] = useState("");
-  const [mapError, setMapError] = useState("");
+const RESULT_COUNTS = [
+  "bidirectional",
+  "oneway",
+  "twoWayConfusion",
+  "total",
+];
 
-  // 에이전트(LLM 질문) 상태
-  const [agentQuestion, setAgentQuestion] = useState("");
-  const [agentPending, setAgentPending] = useState(false);
-  const [agentJobId, setAgentJobId] = useState(null);
-  const [agentStatus, setAgentStatus] = useState(null);
-  const [agentResult, setAgentResult] = useState(null);
+function formatCount(v) {
+  if (v == null) return "—";
+  if (typeof v === "number") return v.toLocaleString();
+  return String(v);
+}
 
-  const mapRef = useRef(null);
+/*
+ * DesignsBlock - 구역 내 기존 일방통행 지정 현황을 접이식으로 표시
+ * items 필드명: roadNm, appnResn, appnYear, roadBt, roadEt, cartrkCo, mdstrpYn
+ */
+function DesignationsBlock({ data }) {
+  const d = data || {};
+  const count = parseInt(d.count, 10) || 0;
+  const items =
+    Array.isArray(d.items) && d.items.length > 0 ? d.items : [];
+  const [open, setOpen] = useState(false);
 
-  useEffect(() => {
-    const key = import.meta.env.VITE_GOOGLE_MAPS_JS_API_KEY;
-    if (!key) {
-      setMapError("지도 API 키가 설정돼 있지 않습니다.");
-      return;
-    }
-    if (window.google?.maps) {
-      initMap();
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&callback=__gm_init`;
-    script.async = true;
-    script.defer = true;
-    window.__gm_init = initMap;
-    document.head.appendChild(script);
-
-    return () => {
-      if (script.parentNode) script.parentNode.removeChild(script);
-      delete window.__gm_init;
-    };
-  }, []);
-
-  function initMap() {
-    if (!window.google?.maps) {
-      setMapError("지도 API 로딩에 실패했습니다.");
-      return;
-    }
-    const el = document.getElementById("map");
-    if (!el) return;
-
-    const map = new window.google.maps.Map(el, {
-      center: { lat: 35.89, lng: 127.77 },
-      zoom: 13,
-      mapTypeControl: false,
-      streetViewControl: false,
-      fullscreenControl: false,
-    });
-
-    const marker = new window.google.maps.Marker({
-      map,
-      position: map.getCenter(),
-      draggable: true,
-    });
-
-    marker.addListener("dragend", () => {
-      const p = marker.getPosition();
-      if (!p) return;
-      setLat(p.lat().toFixed(6));
-      setLng(p.lng().toFixed(6));
-      reverseGeocode(p.lat(), p.lng());
-    });
-
-    map.addListener("click", (e) => {
-      const p = e.latLng;
-      if (!p) return;
-      marker.setPosition(p);
-      setLat(p.lat().toFixed(6));
-      setLng(p.lng().toFixed(6));
-      reverseGeocode(p.lat(), p.lng());
-    });
-
-    const c = map.getCenter();
-    reverseGeocode(c.lat(), c.lng());
+  if (count === 0) {
+    return (
+      <div className="designations">
+        <h3>구역 내 기존 공식 일방통행 지정</h3>
+        <p>해당 구역에 등록된 공식 지정 없음</p>
+      </div>
+    );
   }
 
-  async function reverseGeocode(lat, lng) {
-    try {
-      const res = await fetch("/api/geocode", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lat, lng }),
-      });
-      const json = await res.json();
-      if (json?.address) {
-        setAddr(json.address);
-        setPlace(json.address);
-      }
-    } catch (e) {
-      setAddr("");
-    }
-  }
-
-  const run = async () => {
-    let target = place.trim();
-    let body = {};
-
-    if (lat && lng) {
-      target = addr || `${lat}, ${lng}`;
-      body = { place: target, lat: parseFloat(lat), lng: parseFloat(lng) };
-    } else if (target) {
-      body = { place: target };
-    } else {
-      setError("지명이나 지도 위치를 입력해 주세요.");
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-    setResult(null);
-    setMarkdown("");
-    setJobId(null);
-    setJobStatus("queued");
-    setPollCount(0);
-    setPolling(true);
-
-    try {
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const text = await res.text().catch(() => "");
-      let json = null;
-      if (res.ok && text) {
-        try { json = JSON.parse(text); } catch { json = null; }
-      }
-
-      if (!res.ok || !json) {
-        setError(json?.error || `분석 요청이 실패했습니다(상태: ${res.status}).`);
-        setLoading(false);
-        setPolling(false);
-        return;
-      }
-
-      if (json.job_id) {
-        setJobId(json.job_id);
-        setJobStatus("queued");
-        setLoading(false);
-        return;
-      }
-
-      if (json.markdown) {
-        setResult(json);
-        setMarkdown(json.markdown || "");
-        setLoading(false);
-        setPolling(false);
-        return;
-      }
-
-      setError("예기치 않은 응답입니다.");
-      setLoading(false);
-      setPolling(false);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError("서버 연결 중 오류가 발생했습니다: " + msg);
-      setLoading(false);
-      setPolling(false);
-    }
-  };
-
-  const askAgent = async () => {
-    const question = agentQuestion.trim();
-    if (!question) {
-      setError("Solar에게 할 질문을 입력해 주세요.");
-      return;
-    }
-    if (!place.trim() && !(lat && lng)) {
-      setError("지명이나 지도 위치를 먼저 입력해 주세요.");
-      return;
-    }
-
-    setAgentPending(true);
-    setError("");
-    setAgentStatus(null);
-    setAgentResult(null);
-    setAgentJobId(null);
-
-    try {
-      const body = { question };
-      if (lat && lng) {
-        body.place = addr || `${lat}, ${lng}`;
-        body.lat = parseFloat(lat);
-        body.lng = parseFloat(lng);
-      } else {
-        body.place = place.trim();
-      }
-
-      const res = await fetch("/api/agent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const json = await res.json().catch(() => null);
-
-      if (!res.ok || !json) {
-        setError(json?.error || `에이전트 요청 실패(상태: ${res.status}).`);
-        setAgentPending(false);
-        return;
-      }
-
-      if (json.agent_job_id) {
-        setAgentJobId(json.agent_job_id);
-        setAgentStatus("queued");
-        return;
-      }
-
-      setError("예기치 않은 응답입니다.");
-      setAgentPending(false);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError("서버 연결 중 오류가 발생했습니다: " + msg);
-      setAgentPending(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!agentPending || !agentJobId) return;
-    const timer = setInterval(() => {
-      let cancelled = false;
-      fetch(`/api/agent/${agentJobId}`)
-        .then((r) => r.json())
-        .then((json) => {
-          if (cancelled) return;
-          setAgentStatus(json?.status || "unknown");
-          if (json?.status === "done") {
-            setAgentResult({
-              agent_job_id: json.agent_job_id,
-              engine_job_id: json.engine_job_id,
-              place: json.place || "",
-              bbox: json.bbox || [],
-              question: json.question || "",
-              reply: json.reply || null,
-              reply_error: json.reply_error || null,
-              markdown: json.markdown || "",
-            });
-            setAgentPending(false);
-            clearInterval(timer);
-            return;
-          }
-          if (json?.status === "error") {
-            setError(json.error || "에이전트 처리 중 오류가 발생했습니다.");
-            setAgentPending(false);
-            clearInterval(timer);
-            return;
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setError("에이전트 결과 확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
-            setAgentPending(false);
-          }
-        });
-      return () => {
-        cancelled = true;
-      };
-    }, AGENT_POLL_MS);
-
-    return () => clearInterval(timer);
-  }, [agentPending, agentJobId]);
-
-  useEffect(() => {
-    if (!polling || !jobId) return;
-    const timer = setInterval(() => {
-      let cancelled = false;
-      fetch(`/api/result/${jobId}`)
-        .then((r) => r.json())
-        .then((json) => {
-          if (cancelled) return;
-          if (json?.status === "done") {
-            setResult({
-              place: json.place || "",
-              bbox: json.bbox || [],
-              data: {
-                combination: (json.combination || []).map((r) => ({
-                  round: Number(r.round),
-                  name: r.name,
-                  grade: r.grade,
-                  cum: r.cum,
-                })),
-                braess: (json.braess || []).map((r) => ({
-                  rank: Number(r.rank),
-                  name: r.name,
-                  grade: r.grade,
-                  flow: r.flow,
-                  delta: r.delta,
-                  pct: r.pct,
-                })),
-                mustNot: (json.mustNot || []).map((r) => ({
-                  rank: Number(r.rank),
-                  name: r.name,
-                  grade: r.grade,
-                  flow: r.flow,
-                  delta: r.delta,
-                  pct: r.pct,
-                })),
-                biz: json.biz || null,
-              },
-              summary: {
-                tsttHours: json.summary?.tsttHours
-                  ? String(json.summary.tsttHours).replace(/,/g, "")
-                  : "",
-                savedHours: json.summary?.savedHours
-                  ? String(json.summary.savedHours).replace(/,/g, "")
-                  : "",
-              },
-              markdown: json.markdown || "",
-            });
-            setMarkdown(json.markdown || "");
-            setJobStatus("done");
-            setPolling(false);
-            setPollCount(0);
-            return;
-          }
-          if (json?.status === "error") {
-            setError(json.error || "분석 중 오류가 발생했습니다.");
-            setJobStatus("error");
-            setPolling(false);
-            setPollCount(0);
-            return;
-          }
-          if (!json?.job_id && json?.status !== "done") {
-            // job_id 없는 done 이외 응답은 더 이상 기다리지 않는다
-            setJobStatus("running");
-            setPolling(false);
-            setError("분석 결과 확인을 중단했습니다. 다시 시도해 주세요.");
-            return;
-          }
-          setJobStatus(json?.status || "running");
-          setPollCount((prev) => (prev >= MAX_POLLS - 1 ? MAX_POLLS : prev + 1));
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setError("결과 확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
-            setPolling(false);
-          }
-        });
-      return () => {
-        cancelled = true;
-      };
-    }, POLL_MS);
-
-    return () => clearInterval(timer);
-  }, [polling, jobId]);
-
-  useEffect(() => {
-    if (jobStatus === "done") {
-      return;
-    }
-    if (pollCount >= MAX_POLLS) {
-      setError("분석이 예상보다 오래 걸리고 있습니다. 잠시 후 다시 시도해 주세요.");
-      setPolling(false);
-    }
-  }, [pollCount, jobStatus]);
-
-  const downloadMd = () => {
-    if (!markdown) return;
-    const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    const safeName = (place || "결과")
-      .slice(0, 40)
-      .replace(/[^A-Za-z0-9가-힣 -]/g, "")
-      .trim() || "결과";
-    a.download = `일방통행-영향분석-${safeName}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const rows = items.map((it) => ({
+    name: (it.roadNm || it.name || it.roadName || "—").trim(),
+    width:
+      it.roadBt != null ? Number(it.roadBt).toFixed(1) : null,
+    length:
+      it.roadEt != null ? Number(it.roadEt).toFixed(1) : null,
+    year:
+      it.appnYear != null
+        ? parseInt(it.appnYear, 10)
+        : null,
+  }));
 
   return (
-    <div className="app">
-      <header className="header">
-        <h1>도로 일방통행 영향도 분석</h1>
-        <p className="sub">지도에서 위치를 고르거나 지명을 입력하면 통행시간 개선안·위험 구간·상권 영향을 계산합니다.</p>
-      </header>
-
-      <section className="map-section">
-        <div id="map" className="map"></div>
-        {mapError && <div className="map-error">{mapError}</div>}
-        <div className="map-info">
-          <div className="map-coord">
-            {lat && lng ? (
-              <span>위도 {lat}° / 경도 {lng}°</span>
-            ) : (
-              <span className="muted">지도에서 위치를 선택하세요</span>
-            )}
+    <div className="designations">
+      <h3>
+        구역 내 기존 공식 일방통행 지정
+        <span className="badge">{count}건</span>
+      </h3>
+      {open && (
+        <div className="designations-body">
+          <div className="designations-list">
+            {rows.map((r, i) => (
+              <div key={i} className="designations-item">
+                <div className="designations-row">
+                  <span className="designations-name">{r.name}</span>
+                  {r.width || r.length ? (
+                    <span className="designations-meta">
+                      {r.width ? "폭 " + r.width + "m" : ""}
+                      {r.width && r.length ? " · " : ""}
+                      {r.length ? "연장 " + r.length + "m" : ""}
+                    </span>
+                  ) : null}
+                </div>
+                {r.year ? (
+                  <div className="designations-meta designations-year">
+                    지정 연도 {r.year}
+                  </div>
+                ) : null}
+              </div>
+            ))}
           </div>
-          {addr && <div className="map-addr">선택 위치: {addr}</div>}
         </div>
-      </section>
-
-      <section className="input-card">
-        <input
-          className="input"
-          placeholder="예: 순천 원도심, 대구 중구 동성로"
-          value={place}
-          onChange={(e) => setPlace(e.target.value)}
-        />
-        <button className="btn-primary" onClick={run} disabled={loading}>
-          {loading ? "분석 중…" : "분석하기"}
+      )}
+      {count > 0 && (
+        <button
+          className="designations-toggle"
+          onClick={() => setOpen(!open)}
+        >
+          {open ? "접기" : "상세 보기"}
         </button>
-        {error && <div className="error">{error}</div>}
-      </section>
-
-      <section className="agent-card">
-        <div className="agent-row">
-          <input
-            className="input agent-input"
-            placeholder="Solar에게 질문 예: 어디를 먼저 바꾸면 가장 효과가 큰가요?"
-            value={agentQuestion}
-            onChange={(e) => setAgentQuestion(e.target.value)}
-            disabled={agentPending || loading}
-          />
-          <button
-            className="btn-secondary"
-            onClick={askAgent}
-            disabled={agentPending || loading}
-          >
-            {agentPending ? "대기 중…" : "Solar에게 질문"}
-          </button>
-        </div>
-        {agentStatus === "queued" && (
-          <div className="status-wait">분석 요청을 보냈습니다. 결과를 기다리는 중...</div>
-        )}
-        {agentResult && (
-          <div className="agent-result">
-            <div className="agent-head">
-              <h3>Solar 응답 (근거: engine job_id {agentResult.engine_job_id})</h3>
-              <span className="meta">
-                {agentResult.bbox?.[0] !== undefined
-                  ? `위경도 ${agentResult.bbox[0]}°, ${agentResult.bbox[1]}° / ${agentResult.bbox[2]}°, ${agentResult.bbox[3]}°`
-                  : agentResult.place}
-              </span>
-            </div>
-            <div className="agent-q"><strong>사용자 질문:</strong> {agentResult.question}</div>
-            {agentResult.reply_error ? (
-              <div className="error">{agentResult.reply_error}</div>
-            ) : agentResult.reply ? (
-              <div className="agent-body">
-                <h4>한 줄 요약</h4>
-                <p>{agentResult.reply.summary}</p>
-                <h4>근거</h4>
-                <ul>
-                  {agentResult.reply.evidence.map((e, i) => (
-                    <li key={i}>
-                      <strong>{e.from_table}</strong>: {e.value}
-                    </li>
-                  ))}
-                </ul>
-                <h4>해석 주의</h4>
-                <p>{agentResult.reply.note}</p>
-              </div>
-            ) : null}
-            <div className="agent-meta">
-              이 응답의 수치는 엔진 보고서(engine job_id {agentResult.engine_job_id})에서만 왔으며,
-              Solar는 수치를 바꾸거나 새로 만들지 않았다.
-            </div>
-          </div>
-        )}
-      </section>
-
-      {(result ||
-        jobStatus === "queued" ||
-        jobStatus === "running" ||
-        jobStatus === "error") ? (
-        <section className="results">
-          {(jobStatus === "queued" || jobStatus === "running") && (
-            <div className="status-wait">
-              {jobStatus === "queued"
-                ? "분석 요청을 보냈습니다. 결과를 기다리는 중..."
-                : "분석 중(약 1~3분)…"}
-            </div>
-          )}
-          {jobStatus === "error" && (
-            <div className="error">분석 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.</div>
-          )}
-          {result && (
-            <>
-              <div className="result-head">
-                <h2>{result.place}</h2>
-                <span className="meta">
-                  위경도 {result.bbox?.[0]}°, {result.bbox?.[1]}° / {result.bbox?.[2]}°, {result.bbox?.[3]}°
-                </span>
-              </div>
-
-              {result.data?.combination && result.data.combination.length > 0 && (
-                <div className="card">
-                  <h3>★ 다구간 조합 최적안</h3>
-                  <p className="card-desc">
-                    한 구간씩 최선을 고르고 확정하기를 반복했다. 구간 하나를 바꾸면 교통이 재배분되어
-                    나머지 구간의 값이 전부 달라지므로, 매 라운드마다 바뀐 도로망 위에서 다시 계산했다.
-                  </p>
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>라운드</th>
-                        <th>전환 구간</th>
-                        <th>등급</th>
-                        <th>누적 개선율</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.data.combination.map((r, i) => (
-                        <tr key={i}>
-                          <td>{r.round}</td>
-                          <td>{r.name}</td>
-                          <td>{r.grade}</td>
-                          <td>{r.cum}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <p className="body-save">
-                    이 구역 운전자들이 첨두 1시간 동안 도로에서 보내는 시간의 합이{" "}
-                    <strong>{result.summary?.tsttHours}시간</strong>이다.
-                    위 전환으로 <strong>{result.summary?.savedHours}시간</strong>이 사라진다.
-                    표지판과 노면표시 교체 외에 예산은 들지 않으며, 실제 교통체계개선(TSM) 사업의
-                    통상 효과가 1~3%임을 감안하면 공사 없이 얻는 값이다.
-                  </p>
-                </div>
-              )}
-
-              {result.data?.braess?.length > 0 && (
-                <div className="card">
-                  <h3>① 일방통행으로 바꾸면 전체가 좋아지는 구간</h3>
-                  <p className="card-desc">
-                    도로를 막았는데 총 통행시간이 줄어드는 구간이다. 브라에스 역설에 해당하며,
-                    예산 없이 표지판만 바꿔 얻는 개선이다.
-                  </p>
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>순위</th>
-                        <th>도로명</th>
-                        <th>등급</th>
-                        <th>현재 교통량</th>
-                        <th>ΔTSTT</th>
-                        <th>개선율</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.data.braess.map((r) => (
-                        <tr key={r.rank}>
-                          <td>{r.rank}</td>
-                          <td>{r.name}</td>
-                          <td>{r.grade}</td>
-                          <td>{r.flow}</td>
-                          <td>{r.delta}</td>
-                          <td>{r.pct}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {result.data?.mustNot?.length > 0 && (
-                <div className="card">
-                  <h3>② 절대 막으면 안 되는 구간</h3>
-                  <p className="card-desc">
-                    <strong>구간과 방향까지 봐야 한다.</strong> 같은 도로명이라도 구간번호가 다르면
-                    다른 구간이고, 방향이 다르면 반대 차선이다.
-                  </p>
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>순위</th>
-                        <th>도로명</th>
-                        <th>등급</th>
-                        <th>현재 교통량</th>
-                        <th>ΔTSTT</th>
-                        <th>악화율</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.data.mustNot.map((r) => (
-                        <tr key={r.rank}>
-                          <td>{r.rank}</td>
-                          <td>{r.name}</td>
-                          <td>{r.grade}</td>
-                          <td>{r.flow}</td>
-                          <td>{r.delta}</td>
-                          <td>{r.pct}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {result.data?.biz && (
-                <div className="card biz-card">
-                  <h3>상권 영향</h3>
-                  <p className="biz-line">
-                    평균 접근시간 {result.data.biz.mean0}분 → {result.data.biz.mean1}분 ({result.data.biz.dmean})
-                  </p>
-                  <p className="biz-line">
-                    <strong>최악 상가 {result.data.biz.worst}</strong>
-                  </p>
-                  <p className="biz-verdict">{result.data.biz.verdict}</p>
-                </div>
-              )}
-
-              <div className="notice">
-                <h4>해석 주의</h4>
-                <ul>
-                  <li>지오코딩: Google Maps Geocoding API (region=kr, language=ko)</li>
-                  <li>도로망: OpenStreetMap (OSM). 차로수·제한속도는 국가표준노드링크(국토교통부, 2026-08) 실측값을 우선 쓰고, 매칭 실패 시 도로등급 기본값으로 보정한다</li>
-                  <li>OD는 도로 연장 기반 합성값이다. 절대 시간이 아니라 구간 간 상대 비교로만 쓸 것</li>
-                  <li>보행 안전·형평성은 반영되지 않았다. 통행시간과 상권 접근성 두 축만 본 결과다</li>
-                  <li>조합 최적안은 탐욕적 국소탐색 결과이며 전역 최적해가 아니다</li>
-                </ul>
-              </div>
-
-              <button className="btn-secondary" onClick={downloadMd}>
-                마크다운 보고서 다운로드
-              </button>
-            </>
-          )}
-        </section>
-      ) : null}
+      )}
     </div>
   );
 }
+
+export default function App() {
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("idle");
+  const [result, setResult] = useState(null);
+  const [agentResult, setAgentResult] = useState(null);
+  const [onewayDesignations, setOnewayDesignations] =
+    useState(null);
+  const mountedRef = useRef(true);
+  const queryTimeoutRef = useRef(null);
+
+  const fetchGitHubRepos = useCallback(async () => {
+    try {
+      const res = await fetch(
+        "https://api.github.com/repos/hbinserver/oneway-impact-web",
+        { mode: "cors" }
+      );
+      if (!res.ok) {
+        console.warn(
+          "GitHub API status:",
+          res.status,
+          "Public repo availability:"
+        );
+        return;
+      }
+      const data = await res.json();
+    } catch (e) {
+      console.warn(
+        "GitHub API 조회 불가:",
+        e.message
+      );
+    }
+  }, []);
+
+  const doAnalyze = useCallback(
+    async (place) => {
+      const trimmed = place.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      setStatus("loading");
+      setResult(null);
+      setAgentResult(null);
+      setOnewayDesignations(null);
+
+      try {
+        const res = await fetch(API + "/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ place: trimmed }),
+          signal: aborter.ref.current?.signal,
+        });
+
+        if (!res.ok) {
+          const errBody = await res
+            .json()
+            .catch(() => ({}));
+          throw new Error(
+            errBody.error || `HTTP ${res.status}`
+          );
+        }
+
+        const data = await res.json();
+        setResult(data);
+        setStatus("done");
+
+        /*
+         * 에이전트 요약은 결과 수신 직후 별도 요청으로 가져온다.
+         * 빠른 피드백을 위해 결과 렌더링을 막지 않는다.
+         */
+        setStatus("agent");
+        try {
+          const agentRes = await fetch(
+            API + "/api/agent",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                job_id: data.job_id,
+                place: trimmed,
+                oneway_designations:
+                  data.oneway_designations,
+              }),
+            }
+          );
+          if (agentRes.ok) {
+            const agentData = await agentRes.json();
+            setAgentResult(agentData);
+            setOnewayDesignations(
+              agentData.oneway_designations
+            );
+          }
+        } catch (agentErr) {
+          console.warn(
+            "에이전트 요약 조회 실패:",
+            agentErr.message
+          );
+        }
+      } catch (err) {
+        setResult({
+          error:
+            err instanceof Error
+              ? err.message
+              : String(err),
+        });
+        setStatus("error");
+      }
+    },
+    []
+  );
+
+  const handleSubmit = useCallback(
+    (e) => {
+      e.preventDefault();
+      if (queryTimeoutRef.current) {
+        clearTimeout(queryTimeoutRef.current);
+        queryTimeoutRef.current = null;
+      }
+      doAnalyze(query);
+    },
+    [query, doAnalyze]
+  );
+
+  const handleChange = useCallback(
+    (e) => {
+      const v = e.target.value;
+      setQuery(v);
+      if (queryTimeoutRef.current) {
+        clearTimeout(queryTimeoutRef.current);
+      }
+      queryTimeoutRef.current = setTimeout(() => {
+        doAnalyze(v);
+      }, 800);
+    },
+    [doAnalyze]
+  );
+
+  const handleAbort = useCallback(() => {
+    aborter.abort();
+  }, []);
+
+  const reset = useCallback(() => {
+    setStatus("idle");
+    setResult(null);
+    setAgentResult(null);
+    setOnewayDesignations(null);
+    setQuery("");
+  }, []);
+
+  const fmt = (v, fallback = "—") => {
+    if (v == null) return fallback;
+    if (typeof v === "number") return v.toFixed(1);
+    return String(v);
+  };
+
+  const downloadReport = useCallback(() => {
+    const enc = new TextEncoder();
+    const uint8 = enc.encode(result.markdown || "");
+    const blob = new Blob([uint8], {
+      type: "text/markdown;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download =
+      "oneway-impact-report.md";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, [result]);
+
+  return (
+    <div className="app">
+      <header className="app-header">
+        <h1 className="app-title">
+          전국일방통행도로표준데이터 기반
+          <br />
+          일방통행 전환 영향 분석
+        </h1>
+        <p className="app-subtitle">
+          경찰청 전국일방통행도로표준데이터(공공데이터포털)를
+          기반으로, 지정 구역 내 도로 네트워크의 일방통행
+          전환 가능성과 교통 영향을 신속하게 분석한다.
+        </p>
+      </header>
+
+      <main className="app-main">
+        <section className="input-section">
+          <form
+            className="input-form"
+            onSubmit={handleSubmit}
+          >
+            <div className="input-row">
+              <input
+                className="input-field"
+                type="text"
+                value={query}
+                onChange={handleChange}
+                placeholder="분석할 구역명을 입력하세요 (예: 순천시 원도심, 서울 종로구)"
+                disabled={
+                  status === "loading" ||
+                  status === "agent"
+                }
+                autoComplete="off"
+                autoFocus
+              />
+              <div className="input-actions">
+                {status === "loading" ||
+                status === "agent" ? (
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    onClick={handleAbort}
+                  >
+                    취소
+                  </button>
+                ) : null}
+                <button
+                  className="btn btn-primary"
+                  type="submit"
+                  disabled={
+                    status === "loading" ||
+                    status === "agent" ||
+                    !query.trim()
+                  }
+                >
+                  분석
+                </button>
+              </div>
+            </div>
+          </form>
+
+          {status === "loading" && (
+            <div className="status-bar status-loading">
+              <span className="status-spinner" />
+              <span className="status-text">
+                분석 중입니다...
+              </span>
+            </div>
+          )}
+
+          {status === "agent" && (
+            <div className="status-bar status-agent">
+              <span className="status-spinner" />
+              <span className="status-text">
+                분석 완료 — 보고서 작성 중...
+              </span>
+            </div>
+          )}
+
+          {status === "error" && result?.error && (
+            <div className="status-bar status-error">
+              <span className="status-icon">!</span>
+              <span className="status-text">
+                {result.error}
+              </span>
+            </div>
+          )}
+
+          {status === "done" &&
+            !agentResult &&
+            result?.job_id && (
+              <div className="status-bar status-done">
+                <span className="status-icon">✓</span>
+                <span className="status-text">
+                  분석 완료.
+                </span>
+              </div>
+            )}
+        </section>
+
+        {result && status === "done" && (
+          <section className="result-section">
+            <div className="result-head">
+              <h2>분석 결과</h2>
+              <div className="result-actions">
+                {result.job_id && (
+                  <span className="result-job-id">
+                    작업 ID: {result.job_id}
+                  </span>
+                )}
+                {result.markdown && (
+                  <button
+                    className="btn btn-secondary"
+                    onClick={downloadReport}
+                  >
+                    보고서 다운로드 (.md)
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <DesignationsBlock
+              data={onewayDesignations}
+            />
+
+            {result.error ? (
+              <div className="result-error">
+                <p>{result.error}</p>
+              </div>
+            ) : (
+              <div className="result-cards">
+                {RESULT_CARDS.map((card) => {
+                  const val = result[card.key];
+                  if (val == null) return null;
+                  return (
+                    <div key={card.key} className="card">
+                      <div className="card-title">
+                        {card.title}
+                      </div>
+                      <div className="card-body">
+                        {card.render(result)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {result.bbox && (
+              <div className="result-map">
+                <div className="map-placeholder">
+                  <div className="map-placeholder-icon">
+                    ◯
+                  </div>
+                  <p>
+                    지도 영역 ({result.bbox[0].toFixed(3)},
+                    {result.bbox[1].toFixed(3)}) ~
+                    ({result.bbox[2].toFixed(3)},
+                    {result.bbox[3].toFixed(3)})
+                  </p>
+                  <p className="map-note">
+                    실제 지도는 leaflets/mapbox 등
+                    외부 지도 서비스로 대체할 수
+                    있다.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {result.roadNetworkSummary && (
+              <div className="result-network">
+                <h3>도로 네트워크 요약</h3>
+                <pre className="network-pre">
+                  {result.roadNetworkSummary}
+                </pre>
+              </div>
+            )}
+
+            <div className="result-foot">
+              <p className="result-foot-note">
+                출처: 경찰청 전국일방통행도로표준데이터
+                (공공데이터포털, CC BY), 분석 엔진
+                계산. 지도의 도로·교차로 정보는 분석
+                엔진 내부 네트워크 표출 결과에
+                기초한다.
+              </p>
+            </div>
+          </section>
+        )}
+
+        {agentResult && (
+          <section className="agent-section">
+            <div className="agent-head">
+              <h2>분석 요약 (에이전트)</h2>
+              <div className="agent-meta">
+                <span>
+                  출처: 경찰청 전국일방통행도로표준데이터
+                  (공공데이터포털, CC BY) + 분석
+                  엔진 계산
+                </span>
+                <span>작업 ID: {agentResult.job_id}</span>
+                {agentResult.oneway_designations && (
+                  <span className="agent-designations-link">
+                    구역 내 기존 지정{" "}
+                    {(
+                      agentResult.oneway_designations
+                        .count || 0
+                    ).toLocaleString()}
+                    건
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {agentResult.reply_error ? (
+              <div className="agent-error">
+                <p>{agentResult.reply_error}</p>
+              </div>
+            ) : agentResult.reply ? (
+              <div className="agent-body">
+                <div
+                  className="agent-markdown"
+                  dangerouslySetInnerHTML={{
+                    __html:
+                      renderMarkdownSafe(
+                        agentResult.reply
+                      ),
+                  }}
+                />
+              </div>
+            ) : null}
+
+            <DesignationsBlock
+              data={
+                agentResult.oneway_designations ||
+                onewayDesignations
+              }
+            />
+
+            <div className="agent-foot">
+              <p className="agent-foot-note">
+                출처: 경찰청 전국일방통행도로표준데이터
+                (공공데이터포털, CC BY).
+                에이전트 요약은 분석 엔진 수치를
+                바탕으로 생성되며, 공식 지정 현황
+                데이터와 구분하여 표시한다.
+              </p>
+            </div>
+          </section>
+        )}
+
+        {status === "idle" && (
+          <section className="idle-section">
+            <div className="idle-card">
+              <h2>분석 시작하기</h2>
+              <p>
+                분석을 원하는 구역의 이름이나 동·읍·면
+                단위 지명을 입력하면, 해당 구역의 도로
+                네트워크와 일방통행 지정 현황을 분석해
+                결과를 제공한다.
+              </p>
+              <div className="idle-examples">
+                <h3>예시</h3>
+                <ul>
+                  <li>
+                    <strong>순천시 원도심</strong>
+                    <span className="idle-example-note">
+                      전라남도 순천시 인근 도로망
+                    </span>
+                  </li>
+                  <li>
+                    <strong>서울 종로구</strong>
+                    <span className="idle-example-note">
+                      서울특별시 종로구 인근 도로망
+                    </span>
+                  </li>
+                  <li>
+                    <strong>대구 수성구</strong>
+                    <span className="idle-example-note">
+                      대구 광역시 수성구 인근 도로망
+                    </span>
+                  </li>
+                </ul>
+              </div>
+              <p className="idle-note">
+                분석 결과는 참고용이며, 실제 일방통행
+                지정·전환은 해당 지방자치단체의 교통
+                계획과 예산에 따른다.
+              </p>
+            </div>
+          </section>
+        )}
+      </main>
+
+      <footer className="app-footer">
+        <p>
+          국토교통부·경찰청 전국일방통행도로표준데이터
+          기반 분석 도구 (공공데이터포털, CC BY).
+        </p>
+        <p>
+          엔진 계산치는 해당 구역 도로 네트워크
+          분석에 기초하며, 공식 지정 현황과 다를 수
+          있다.
+        </p>
+      </footer>
+    </div>
+  );
+}
+
+/* ---------- 아래 헬퍼는 기존 코드 유지 ---------- */
+
+function renderMarkdownSafe(md) {
+  /* 간단한 마크다운→HTML 변환 (요약 표시용) */
+  if (!md) return "";
+  let html = md
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/^### (.*)$/gm, "<h3>$1</h3>")
+    .replace(/^## (.*)$/gm, "<h2>$1</h2>")
+    .replace(/^# (.*)$/gm, "<h1>$1</h1>")
+    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.*?)\*/g, "<em>$1</em>")
+    .replace(/`(.*?)`/g, "<code>$1</code>")
+    .replace(/^• (.*)$/gm, "<li>$1</li>")
+    .replace(/(<li>.*<\/li>)/s, "<ul>$1</ul>")
+    .replace(/\n\n/g, "</p><p>")
+    .replace(/\n/g, "<br />");
+  return "<p>" + html + "</p>";
+}
+
+const aborter = {
+  ref: { current: null },
+  abort() {
+    if (this.ref.current) {
+      this.ref.current.abort();
+      this.ref.current = null;
+    }
+  },
+  create() {
+    this.abort();
+    this.ref.current = new AbortController();
+    return this.ref.current.signal;
+  },
+};

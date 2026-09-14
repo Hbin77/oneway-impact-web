@@ -204,7 +204,9 @@ def structured_reply(job_id: str, markdown: str, question: str) -> dict:
         "답변은 한국어로 짧게, 근거는 표 이름과 인용값을 evidence에 적고, "
         "job_id를 항상 표시하라.\n"
         "해석 주의(통행시간은 합성 OD 기반 상대 비교, 상권 접근성은 두 축만, 조합은 탐욕 국소해 등)는 "
-        "엔진 고지사항을 그대로 따른다."
+        "엔진 고지사항을 그대로 따른다.\n"
+        "앞의 '기존 공식 일방통행 지정 현황' 블록은 경찰청 전국일방통행도로표준데이터(공공데이터포털)이며, "
+        "인용 시 evidence.from_table에 그 출처와 참조일을 적고, 엔진 수치와 섞거나 바꾸지 않는다."
     )
     user = (
         f"## 엔진 보고서 (job_id: {job_id})\n\n{markdown}\n\n"
