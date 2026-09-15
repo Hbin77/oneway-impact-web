@@ -179,6 +179,11 @@ export default function App() {
   const [addr, setAddr] = useState("");
   const [mapError, setMapError] = useState("");
 
+  const [jobId, setJobId] = useState(null);
+  const [jobStatus, setJobStatus] = useState(null);
+  const [pollCount, setPollCount] = useState(0);
+  const [polling, setPolling] = useState(false);
+
   // 에이전트(LLM 질문) 상태
   const [agentQuestion, setAgentQuestion] = useState("");
   const [agentPending, setAgentPending] = useState(false);
