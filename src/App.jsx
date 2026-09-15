@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import "./style.css";
 
 const POLL_MS = 2500;
-const MAX_POLLS = 60;
+const MAX_POLLS = 240;
 
 const AGENT_POLL_MS = 2500;
 const MAX_AGENT_POLLS = 480;
@@ -418,6 +418,8 @@ export default function App() {
               reply: json.reply || null,
               reply_error: json.reply_error || null,
               markdown: json.markdown || "",
+              oneway_designations: json.oneway_designations || null,
+              abst_compare: json.abst_compare || null,
             });
             setAgentPending(false);
             clearInterval(timer);
@@ -480,6 +482,8 @@ export default function App() {
                   pct: r.pct,
                 })),
                 biz: json.biz || null,
+                oneway_designations: json.oneway_designations || null,
+                abst_compare: json.abst_compare || null,
               },
               summary: {
                 tsttHours: json.summary?.tsttHours
@@ -640,7 +644,7 @@ export default function App() {
             <DesignationsBlock data={agentResult.oneway_designations} />
             <AbstCompareBlock data={agentResult.abst_compare} />
             <div className="agent-meta">
-              이 응답의 수치는 엔진 보고서(engine job_id {agentResult.engine_job_id})에서만 왔으며,
+              이 응답의 수치는 엔진 보고서(engine job_id {agentResult.engine_job_id})와 경찰청 전국일방통행도로표준데이터에서만 왔으며,
               Solar는 수치를 바꾸거나 새로 만들지 않았다.
             </div>
           </div>
