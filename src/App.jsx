@@ -78,6 +78,96 @@ function DesignationsBlock({ data }) {
   );
 }
 
+function AbstCompareBlock({ data }) {
+  if (!data || typeof data !== "object") return null;
+  const d = data;
+
+  if (!d.ok) {
+    return (
+      <div className="card abst">
+        <h3>미시 시뮬레이션 교차검증 (A/B Street)</h3>
+        <p className="abst-fail">미시 시뮬레이션 교차검증을 수행하지 못했습니다</p>
+        {d.note ? <p className="abst-note">{d.note}</p> : null}
+      </div>
+    );
+  }
+
+  const appliedNames = (d.applied || [])
+    .map((a) => a.name)
+    .filter(Boolean)
+    .join(" · ");
+
+  const before = d.before || {};
+  const after = d.after || {};
+  const delta = d.delta || {};
+
+  const tripsB = before.trips != null ? String(before.trips) : "—";
+  const tripsA = after.trips != null ? String(after.trips) : "—";
+  const tripsD = delta.trips != null
+    ? (delta.trips >= 0 ? "+" : "") + delta.trips
+    : "—";
+
+  const meanB = before.mean_sec != null ? before.mean_sec.toFixed(1) + "초" : "—";
+  const meanA = after.mean_sec != null ? after.mean_sec.toFixed(1) + "초" : "—";
+  const meanD = delta.mean_sec != null
+    ? (delta.mean_sec >= 0 ? "+" : "") + delta.mean_sec.toFixed(1) + "초"
+    : "—";
+
+  const p90B = before.p90_sec != null ? before.p90_sec.toFixed(1) + "초" : "—";
+  const p90A = after.p90_sec != null ? after.p90_sec.toFixed(1) + "초" : "—";
+  const p90D = delta.p90_sec != null
+    ? (delta.p90_sec >= 0 ? "+" : "") + delta.p90_sec.toFixed(1) + "초"
+    : "—";
+
+  const roadB = before.road_sum != null ? String(before.road_sum) : "—";
+  const roadA = after.road_sum != null ? String(after.road_sum) : "—";
+
+  return (
+    <div className="card abst">
+      <h3>미시 시뮬레이션 교차검증 (A/B Street)</h3>
+      {appliedNames ? (
+        <p className="abst-applied">적용 구간: {appliedNames}</p>
+      ) : null}
+      <table className="table">
+        <thead>
+          <tr>
+            <th>지표</th>
+            <th>전환 전</th>
+            <th>전환 후</th>
+            <th>변화</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>운전 완료 통행</td>
+            <td>{tripsB}</td>
+            <td>{tripsA}</td>
+            <td>{tripsD}</td>
+          </tr>
+          <tr>
+            <td>평균 통행시간</td>
+            <td>{meanB}</td>
+            <td>{meanA}</td>
+            <td>{meanD}</td>
+          </tr>
+          <tr>
+            <td>상위 10% 통행시간</td>
+            <td>{p90B}</td>
+            <td>{p90A}</td>
+            <td>{p90D}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="abst-roadsum">
+        전환 도로 통과량 {roadB} → {roadA} 대 (한 방향 차단 반영)
+      </p>
+      <p className="abst-notice">
+        A/B Street 무작위 수요(seed 42) 기반 미시 시뮬레이션이며 엔진의 합성 OD 와 수요가 다르다. 절대값 비교 금지, 방향성 교차검증용. 순천 원도심만 지원.
+      </p>
+    </div>
+  );
+}
+
 export default function App() {
   const [place, setPlace] = useState("");
   const [loading, setLoading] = useState(false);
@@ -543,6 +633,7 @@ export default function App() {
               </div>
             ) : null}
             <DesignationsBlock data={agentResult.oneway_designations} />
+            <AbstCompareBlock data={agentResult.abst_compare} />
             <div className="agent-meta">
               이 응답의 수치는 엔진 보고서(engine job_id {agentResult.engine_job_id})에서만 왔으며,
               Solar는 수치를 바꾸거나 새로 만들지 않았다.
@@ -560,7 +651,7 @@ export default function App() {
             <div className="status-wait">
               {jobStatus === "queued"
                 ? "분석 요청을 보냈습니다. 결과를 기다리는 중..."
-                : "분석 중(약 1~3분)…"}
+                : "분석 중(순천 1~2분, 다른 지역 최대 8분)…"}
             </div>
           )}
           {jobStatus === "error" && (
@@ -706,6 +797,7 @@ export default function App() {
               </div>
 
               <DesignationsBlock data={result.oneway_designations} />
+              <AbstCompareBlock data={result.abst_compare} />
 
               <button className="btn-secondary" onClick={downloadMd}>
                 마크다운 보고서 다운로드
