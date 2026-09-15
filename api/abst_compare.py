@@ -414,7 +414,7 @@ def _build_edits(matched: list[dict]) -> tuple | None:
                 "new": new_obj,
             }
         })
-        applied_list.append({"rank": m.get("rank", 0), "name": m["name"]})
+        applied_list.append({"rank": m.get("rank", 0), "name": m["name"], "road_id": road_id, "osm_way_id": osm_way_id, "closed_dir": "Fwd" if dot > 0 else "Back"})
 
     if not commands:
         return None, [], skipped_list
@@ -509,6 +509,24 @@ def compare(markdown: str, network_path: str) -> dict:
 
 # ────────────────────────────────────────────── 내부 구현 (락 안에서 실행)
 def _compare_impl(markdown: str, network_path: str, t0: float, note: str) -> dict:
+    try:
+        return _compare_impl_inner(markdown, network_path, t0, note)
+    except Exception as e:
+        return {
+            "ok": False, "applied": 0, "skipped": 0,
+            "before": None, "after": None, "delta": None,
+            "note": note + " (내부 오류: " + str(e) + ")",
+        }
+    finally:
+        # 성공/실패 관계없이 맵을 원상태로 복구
+        _post("/sim/load", {"scenario": SCENARIO, "modifiers": [], "edits": None}, timeout=30.0)
+
+def _compare_impl_inner(markdown: str, network_path: str, t0: float, note: str) -> dict:
+    # 상태 의존 버그 방어: 이전 호출의 edits(oneway_combo)가 남아있으면
+    # _build_edits가 이미 한쪽 차로만 남은 도로를 읽어서 전부 skip → edits None.
+    # 매칭 직후, edits 빌드 전에 맵을 원상태로 되돌린다.
+    _post("/sim/load", {"scenario": SCENARIO, "modifiers": [], "edits": None}, timeout=30.0)
+
     matched = _match_links(markdown, network_path)
     if not matched:
         return {
@@ -528,6 +546,14 @@ def _compare_impl(markdown: str, network_path: str, t0: float, note: str) -> dic
     applied = built_applied
     skipped = built_skipped
 
+    if edits is None:
+        # 적용 가능한 전환 구간이 없음 — 예외가 아니라 정상 반환
+        return {
+            "ok": False, "applied": applied, "skipped": skipped,
+            "before": None, "after": None, "delta": None,
+            "note": note + " (적용 가능한 전환 구간 없음)",
+        }
+
     if time.time() - t0 > TIME_LIMIT:
         return {
             "ok": False, "applied": applied, "skipped": skipped,
@@ -538,7 +564,8 @@ def _compare_impl(markdown: str, network_path: str, t0: float, note: str) -> dic
     # baseline
     _post("/sim/load", {"scenario": SCENARIO, "modifiers": [], "edits": None}, timeout=30.0)
     _get("/sim/goto-time?t=09:00:00", timeout=15.0)
-    applied_road_ids = {c["ChangeRoad"]["r"]["osm_way_id"] for c in (edits.get("commands") or []) if "ChangeRoad" in c and "r" in c["ChangeRoad"]}
+    # road_id(정수, get-nearest-road 응답) 집합으로 before/after 모두 필터링
+    applied_road_ids = {a["road_id"] for a in applied if "road_id" in a}
     before = _aggregate(applied_road_ids if applied_road_ids else None)
     if before is None:
         return {
@@ -556,7 +583,7 @@ def _compare_impl(markdown: str, network_path: str, t0: float, note: str) -> dic
     # edited
     _post("/sim/load", {"scenario": SCENARIO, "modifiers": [], "edits": edits}, timeout=30.0)
     _get("/sim/goto-time?t=09:00:00", timeout=15.0)
-    after = _aggregate()
+    after = _aggregate(applied_road_ids if applied_road_ids else None)
     if after is None:
         return {
             "ok": False, "applied": applied, "skipped": skipped,
@@ -579,3 +606,5 @@ def _compare_impl(markdown: str, network_path: str, t0: float, note: str) -> dic
         "delta": delta,
         "note": note,
     }
+    # 성공/실패 관계없이 맵을 원상태로 복구
+    _post("/sim/load", {"scenario": SCENARIO, "modifiers": [], "edits": None}, timeout=30.0)
