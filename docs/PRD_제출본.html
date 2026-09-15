@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>PRD — oneway-impact-web (제출본)</title>
+<style>
+  @page { size: A4; margin: 18mm; }
+  html, body {
+    font-family: "Noto Sans KR", sans-serif;
+    font-size: 10.5pt;
+    color: #111827;
+    line-height: 1.55;
+    margin: 0;
+  }
+  h1 { font-size: 17pt; margin: 0 0 8px; }
+  h2 { font-size: 12.5pt; margin: 16px 0 4px; border-bottom: 1px solid #e5e7eb; padding-bottom: 3px; }
+  p { margin: 4px 0; }
+  ul { margin: 4px 0; padding-left: 18px; }
+  li { margin: 2px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 10pt; }
+  th, td { border: 1px solid #e5e7eb; padding: 5px 8px; text-align: left; vertical-align: top; }
+  th { background: #f3f4f6; }
+  strong { color: #111827; }
+  .lead { color: #374151; }
+  hr { border: none; border-top: 1px solid #e5e7eb; margin: 14px 0; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 9.5pt; background: #f3f4f6; padding: 1px 3px; border-radius: 3px; }
+  .foot { margin-top: 16px; font-size: 10pt; }
+  .foot a { color: #2563eb; }
+</style>
+</head>
+<body>
+<h1>PRD — oneway-impact-web (제출본)</h1>
+
+<h2>1. 한 줄 정의</h2>
+<p class="lead">지자체 교통 담당자가 지명만 입력하면, 용역 발주 전에 일방통행 전환 후보 구간·통행시간 영향·상권 영향을 근거와 함께 빠르게 1차 검토하는 웹 서비스.</p>
+<p><strong>누가 왜 쓰는지</strong></p>
+<ul>
+  <li>지자체 교통과·도로과·도시계획 실무자(B2G). 용역 발주 전 자체 스크리닝 용도.</li>
+  <li>결과를 보고서·민원 답변·회의 자료에 바로 붙일 수 있어야 한다.</li>
+  <li>공유 링크로 바로 꺼내 쓰는 흐름이 자연스럽다.</li>
+</ul>
+
+<h2>2. 스킬 매핑</h2>
+<ul>
+  <li>사용 스킬: <code>oneway-impact-analyzer</code> (원본: <code>scripts/road_impact.py</code> — Overpass 도로망 수집 + BPR + Frank-Wolfe UE 배정 + 방향 차단 재배정 + 조합 탐색 + 상권 영향 평가).</li>
+  <li>엔진 <code>api/road_impact.py</code>는 예선 원본과 sha256 바이트 동일(수정 0). 서비스는 재구현 없이 원본 스크립트를 그대로 호출한다.</li>
+  <li>서비스가 덧붙인 것: 비동기 job API, Google 지오코딩, 경찰청 전국일방통행도로표준데이터 컨텍스트, Solar Pro 4 에이전트(구조화 출력, 근거 인용, engine job_id 표시), A/B Street 미시 시뮬레이션 교차검증(abst_compare), React 화면.</li>
+  <li>스킬의 "결과를 말할 때 반드시 붙일 것" 고지가 Solar 시스템 프롬프트 규칙으로 옮겨졌다. Solar는 엔진 산출물(마크다운)을 읽고 설명·구조화만 하며, 수치를 새로 만들거나 바꾸지 않는다.</li>
+</ul>
+
+<h2>3. 구현 범위</h2>
+<table>
+  <tr><th style="width:14%">구분</th><th>내용</th></tr>
+  <tr>
+    <td>P0 완료</td>
+    <td>지명 기반 분석 실행(Google 지오코딩 → bbox → 원본 스킬 실행) / 조합 최적안 / 브라에스 역설 구간 표 / 절대 막으면 안 되는 구간 표 / 상권 영향 / Solar 에이전트 질의응답(구조화, 근거 인용) / A/B Street 미시 시뮬레이션 교차검증(순천 원도심) / 배포(본인 서버 + Cloudflare Tunnel)</td>
+  </tr>
+  <tr>
+    <td>P1 향후</td>
+    <td>다른 지역 A/B Street 지도 / 3D 전/후 시각화 / Solar 도구 호출형 에이전트(스킬처럼 스스로 분석 실행·예외 재실행)</td>
+  </tr>
+</table>
+
+<h2>4. 아키텍처</h2>
+<p>프론트 React(client) ↔ Vercel/서버 Python <code>/api</code>(Flask + gunicorn) ↔ 원본 <code>road_impact.py</code>(그대로 호출) + Google Geocoding + data.go.kr 경찰청 데이터 + Upstage Solar Pro 4 + A/B Street headless 서버. 모든 키는 서버 환경변수만, 클라이언트 소스·응답 JSON 노출 금지. 도로망은 OSM(Overpass, 미러 폴백) + 국가표준노드링크 차로수·제한속도.</p>
+<p><strong>API 5개</strong></p>
+<ul>
+  <li><code>POST /api/analyze</code> — 지명/위경도로 분석 요청, job_id 반환</li>
+  <li><code>GET /api/result/&lt;id&gt;</code> — 결과 polling(done 시 결과 + abst_compare 첨부)</li>
+  <li><code>POST /api/agent</code> — Solar 질문 요청, agent_job_id 반환</li>
+  <li><code>GET /api/agent/&lt;id&gt;</code> — 에이전트 결과 polling(done 시 reply + oneway_designations + abst_compare)</li>
+  <li><code>POST /api/geocode</code> — 위경도 → 주소(역지오코딩)</li>
+</ul>
+
+<h2>5. 검증 수치</h2>
+<ul>
+  <li>순천 원도심 전체 흐름(엔진+지정현황+A/B Street+Solar): 176초(엔진 단독 약 90초, A/B Street 비교 13초).</li>
+  <li>대구 3km bbox(Overpass 실시간, 로컬): 7분 26초 → "다른 지역 최대 8분".</li>
+  <li>엔진 조합 최적안(순천): 3구간 전환 시 총통행시간 -1.079%(316,560→313,145 대·분), 매일 56.9시간 절감, 상권 평균 접근 6.34→6.30분, 최악 상가 +0.45분.</li>
+  <li>Solar 인용: 지정 현황 질문 시 경찰청 데이터 인용 공개 3/3회.</li>
+  <li>A/B Street 교차검증(무작위 수요): Drive 6,147건, 평균 357.3→358.4초(+0.3%), p90 547.2→549.5초, 전환 도로 통과량 1,136→306 — 무작위 수요 기반, 절대값 비교 금지, 방향성 교차검증.</li>
+</ul>
+
+<h2>6. 필요 설정</h2>
+<p>서버(<code>/api</code>) 환경변수만. 값 금지.</p>
+<table>
+  <tr><th style="width:30%">키</th><th style="width:42%">용도</th><th>발급처</th></tr>
+  <tr>
+    <td><code>GOOGLE_MAPS_GEOCODING_API_KEY</code></td>
+    <td>지명 → 위경도 지오코딩(서버만, <code>region=kr</code>)</td>
+    <td>Google Maps Geocoding API (결제 카드·과금 필요)</td>
+  </tr>
+  <tr>
+    <td><code>UPSTAGE_API_KEY</code></td>
+    <td>Solar Pro 4 chat completions 호출(서버만)</td>
+    <td>Upstage 콘솔 (<code>api.upstage.ai/v1/chat/completions</code>, <code>upstage/solar-pro4</code>)</td>
+  </tr>
+  <tr>
+    <td><code>DATA_GO_KR_KEY</code></td>
+    <td>경찰청 전국일방통행도로표준데이터 조회(서버만)</td>
+    <td>공공데이터포털(data.go.kr 15028199)</td>
+  </tr>
+  <tr>
+    <td><code>ABST_API</code></td>
+    <td>A/B Street headless 서버 베이스 URL(예: <code>http://127.0.0.1:1234</code>, 서버만)</td>
+    <td>A/B Street headless 빌드</td>
+  </tr>
+</table>
+
+<h2>7. 한계·고지</h2>
+<ul>
+  <li>OD 통행량은 합성값 → 절대 시간이 아니라 구간 간 상대 비교로만 유효.</li>
+  <li>A/B Street 결과는 순천 원도심만 지원, 무작위 수요 기반 → 절대값 비교 금지, 방향성 교차검증용.</li>
+  <li>조합 최적안은 탐욕적 국소탐색 결과, 전역 최적해가 아님.</li>
+  <li>보행 안전·형평성은 계산 범위에 없음(통행시간·상권 접근성 두 축만).</li>
+  <li>Overpass 미러 4곳 전부 실패 시 분석 중단(순천 외 구역은 OSM 값 + 도로등급 기본값으로 계산).</li>
+  <li>Google Geocoding은 결제 카드 등록·과금 필요, 배포·운영 비용 본인 부담.</li>
+  <li>Vercel 서버리스 함수 1요청 최대 5분, 월 4 CPU-시간 범위 내 운영.</li>
+</ul>
+
+<div class="foot">
+  <strong>배포·소스</strong><br>
+  서비스: <a href="https://oneway.hbinserver.cloud">https://oneway.hbinserver.cloud</a><br>
+  GitHub: <a href="https://github.com/Hbin77/oneway-impact-web">https://github.com/Hbin77/oneway-impact-web</a><br>
+  커밋 해시: 제출 시 최종 해시 기입
+</div>
+</body>
+</html>
