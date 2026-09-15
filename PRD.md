@@ -59,6 +59,7 @@
   - `GOOGLE_MAPS_GEOCODING_API_KEY` — 지명 → 위경도 지오코딩용 (Google Maps Geocoding API 발급, 결제 카드 등록·과금 필요). 한국 지명 정확도 향상을 위해 요청에 `region=kr`, `language=ko` 파라미터를 함께 보낸다. 서버에서만 사용, 클라이언트 소스·응답 JSON에 노출 금지.
   - `UPSTAGE_API_KEY` — Solar Pro 4 chat completions 호출용 (Upstage 콘솔에서 발급). 서버 /api에서만 사용, 클라이언트 소스·응답 JSON에 노출 금지. 엔드포인트: `https://api.upstage.ai/v1/chat/completions` (OpenAI 호환). 모델은 `upstage/solar-pro4` 하나만 사용하며 다른 모델·폴백·MoA는 쓰지 않는다.
   - `DATA_GO_KR_KEY` — 전국일방통행도로표준데이터(공공데이터포털) 조회용. 경찰청·행정안전부가 공개하는 일방통행도로 표준데이터(도로명, 구간, 지정연도, 차로수 등)를 공공데이터포털 API로 조회할 때 사용한다. 서버 /api에서만 사용, 클라이언트 소스·응답 JSON에 노출 금지.
+  - `ABST_API` — A/B Street headless 서버 베이스 URL (예: `http://127.0.0.1:1234`). 순천 구역 분석 시 엔진 마크다운을 A/B Street 시뮬레이션에 넣어 전환 전/후 비교를 수행한다. 서버 /api에서만 사용, 클라이언트 소스·응답 JSON에 노출 금지.
 
 - 사용자 프로필: 이번 MVP는 최소화. “지명만 넣으면 바로 분석”이 기본. 반복 사용용 설정은 이후 확장으로 남긴다.
 

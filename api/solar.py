@@ -141,6 +141,7 @@ def chat_completion(
         "model": MODEL,
         "messages": messages,
         "max_tokens": 4096,
+        "temperature": 0.2,
     }
     if tools is not None:
         payload["tools"] = tools

@@ -305,6 +305,19 @@ def _start_job(job_id, args, use_cache):
         # (별도 스레드면 에이전트가 done을 보는 즉시 가져가서 필드가 비어버린다.)
         _attach_designations(job_id, args.get("address", ""), args["bbox"])
 
+        # A/B Street 전/후 비교 (순천 bbox와 겹치고 ABST_API 있을 때만)
+        if _bboxes_overlap(args["bbox"], SUNCHOON_BBOX) and os.environ.get("ABST_API"):
+            try:
+                import abst_compare as _abst
+                _abst_result = _abst.compare(stdout or "", str(API_BASE / "suncheon_network.json"))
+                if _abst_result is not None:
+                    cur = _load_job(job_id)
+                    if cur is not None:
+                        cur["abst_compare"] = _abst_result
+                        _save_job(job_id, cur)
+            except Exception:
+                pass  # 실패해도 엔진 결과는 done으로 저장된다
+
         job = _load_job(job_id) or {}
         _save_job(job_id, {
             "status": "done",
@@ -313,6 +326,7 @@ def _start_job(job_id, args, use_cache):
             "place": args["place"],
             "address": args.get("address", ""),
             "oneway_designations": job.get("oneway_designations", {"count": 0, "items": []}),
+            "abst_compare": job.get("abst_compare"),
         })
 
     # 별도 스레드 없이 단순 호출은 블로킹되므로, 별도 프로세스로 대기
@@ -437,6 +451,7 @@ def result(job_id):
                     "bbox": job.get("bbox", []),
                     "markdown": job.get("markdown", ""),
                     "oneway_designations": ons,
+                    "abst_compare": job.get("abst_compare"),
                 }
             ),
             200,

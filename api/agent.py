@@ -129,46 +129,6 @@ def _designations_summary_block(ons: dict) -> str:
     return "\n".join(parts)
 
 
-def _designations_summary_block(ons: dict) -> str:
-    """Solar 프롬프트 앞에 붙일 기존 공식 일방통행 지정 현황 요약 블록.
-
-    items 전체는 넣지 않고 건수·범위·도로명 일부·source만 요약한다.
-    """
-    if not isinstance(ons, dict) or ons.get("count", 0) == 0:
-        return ""
-
-    count = ons.get("count", 0)
-    road_bt_min = ons.get("roadBt_min")
-    road_bt_max = ons.get("roadBt_max")
-    road_et_min = ons.get("roadEt_min")
-    road_et_max = ons.get("roadEt_max")
-    appn_min = ons.get("appnYear_min")
-    appn_max = ons.get("appnYear_max")
-    source = ons.get("source", "경찰청 전국일방통행도로표준데이터(공공데이터포털)")
-    sample = ons.get("sample", []) or []
-    road_names = []
-    for row in sample[:5]:
-        nm = row.get("roadNm", "").strip() if isinstance(row, dict) else ""
-        if nm:
-            road_names.append(nm)
-    names_txt = ", ".join(road_names) if road_names else "없음"
-
-    parts = [
-        "## 기존 공식 지정 현황 (별도 출처 — 아래 표·engine 계산 수치와 별개)",
-        f"- 출처: {source}",
-        f"- 구역 내 기존 공식 일방통행 지정: {count}건",
-    ]
-    if road_bt_min is not None and road_bt_max is not None:
-        parts.append(f"- 도로 폭 범위: {road_bt_min}~{road_bt_max}m")
-    if road_et_min is not None and road_et_max is not None:
-        parts.append(f"- 도로 연장 범위: {road_et_min}~{road_et_max}m")
-    if appn_min is not None and appn_max is not None:
-        parts.append(f"- 지정연도 범위: {appn_min}~{appn_max}년")
-    parts.append(f"- 도로명(일부): {names_txt}")
-    parts.append("- 위 수치는 경찰청 전국일방통행도로표준데이터(공공데이터포털)이며, 엔진 계산에는 사용하지 않는다.")
-    return "\n".join(parts)
-
-
 def _wait_for_engine(job_id, agent_job_id):
     """engine job 완료까지 폴링하고 결과를 agent 상태에 저장."""
     try:
@@ -187,14 +147,17 @@ def _wait_for_engine(job_id, agent_job_id):
                 ons = ej.get("oneway_designations") if ej else None
                 if not isinstance(ons, dict):
                     ons = {"count": 0, "items": []}
+                st = _load_agent(agent_job_id)
                 _save_agent(agent_job_id, {
                     "status": "engine_done",
                     "engine_job_id": job_id,
                     "place": ej.get("place", ""),
                     "bbox": ej.get("bbox", []),
+                    "question": st.get("question", ""),
                     "markdown": ej.get("markdown", ""),
                     "engine_error": ej.get("error"),
                     "oneway_designations": ons,
+                    "abst_compare": ej.get("abst_compare"),
                 })
                 return
             if st == "error":
@@ -218,46 +181,6 @@ def _wait_for_engine(job_id, agent_job_id):
         })
 
 
-def _designations_summary_block(ons: dict) -> str:
-    """Solar 프롬프트 앞에 붙일 기존 공식 일방통행 지정 현황 요약 블록.
-
-    items 전체는 넣지 않고 건수·범위·도로명 일부·source만 요약한다.
-    """
-    if not isinstance(ons, dict) or ons.get("count", 0) == 0:
-        return ""
-
-    count = ons.get("count", 0)
-    road_bt_min = ons.get("roadBt_min")
-    road_bt_max = ons.get("roadBt_max")
-    road_et_min = ons.get("roadEt_min")
-    road_et_max = ons.get("roadEt_max")
-    appn_min = ons.get("appnYear_min")
-    appn_max = ons.get("appnYear_max")
-    source = ons.get("source", "경찰청 전국일방통행도로표준데이터(공공데이터포털)")
-    sample = ons.get("sample", []) or []
-    road_names = []
-    for row in sample[:5]:
-        nm = row.get("roadNm", "").strip() if isinstance(row, dict) else ""
-        if nm:
-            road_names.append(nm)
-    names_txt = ", ".join(road_names) if road_names else "없음"
-
-    parts = [
-        "## 기존 공식 일방통행 지정 현황 (별도 출처 — 아래 표와 engine 계산 수치는 별개)",
-        f"- 출처: {source}",
-        f"- 구역 내 기존 공식 일방통행 지정: {count}건",
-    ]
-    if road_bt_min is not None and road_bt_max is not None:
-        parts.append(f"- 도로 폭 범위: {road_bt_min}~{road_bt_max}m")
-    if road_et_min is not None and road_et_max is not None:
-        parts.append(f"- 도로 연장 범위: {road_et_min}~{road_et_max}m")
-    if appn_min is not None and appn_max is not None:
-        parts.append(f"- 지정연도 범위: {appn_min}~{appn_max}년")
-    parts.append(f"- 도로명(일부): {names_txt}")
-    parts.append("- 위 수치는 경찰청 전국일방통행도로표준데이터(공공데이터포털)이며, 엔진 계산에는 사용하지 않는다.")
-    return "\n".join(parts)
-
-
 def _run_solar(agent_job_id, markdown, job_id, question, oneway_designations):
     """Solar 응답을 시도하고 결과를 agent 상태에 저장."""
     # 기존 공식 일방통행 지정 현황 요약 블록을 엔진 마크다운 앞에 붙인다.
@@ -273,6 +196,7 @@ def _run_solar(agent_job_id, markdown, job_id, question, oneway_designations):
             "markdown": markdown,
             "place": _load_agent(agent_job_id).get("place", ""),
             "bbox": _load_agent(agent_job_id).get("bbox", []),
+            "question": _load_agent(agent_job_id).get("question", ""),
             "reply": None,
             "reply_error": f"Solar 모듈 로딩 실패(LLM 미사용): {exc}",
             "oneway_designations": oneway_designations if isinstance(oneway_designations, dict) else {"count": 0, "items": []},
@@ -287,6 +211,7 @@ def _run_solar(agent_job_id, markdown, job_id, question, oneway_designations):
             "markdown": markdown,
             "place": _load_agent(agent_job_id).get("place", ""),
             "bbox": _load_agent(agent_job_id).get("bbox", []),
+            "question": _load_agent(agent_job_id).get("question", ""),
             "reply": None,
             "reply_error": "UPSTAGE_API_KEY가 설정돼 있지 않아 Solar 응답을 만들지 않았습니다. 엔진 결과만 표시됩니다.",
             "oneway_designations": oneway_designations if isinstance(oneway_designations, dict) else {"count": 0, "items": []},
@@ -301,6 +226,7 @@ def _run_solar(agent_job_id, markdown, job_id, question, oneway_designations):
             "markdown": markdown,
             "place": _load_agent(agent_job_id).get("place", ""),
             "bbox": _load_agent(agent_job_id).get("bbox", []),
+            "question": _load_agent(agent_job_id).get("question", ""),
             "reply": None,
             "reply_error": got.get("error", "Solar 응답 생성 실패"),
             "oneway_designations": oneway_designations if isinstance(oneway_designations, dict) else {"count": 0, "items": []},
@@ -316,6 +242,7 @@ def _run_solar(agent_job_id, markdown, job_id, question, oneway_designations):
         "markdown": markdown,
         "place": _load_agent(agent_job_id).get("place", ""),
         "bbox": _load_agent(agent_job_id).get("bbox", []),
+        "question": _load_agent(agent_job_id).get("question", ""),
         "reply": reply,
         "reply_error": None,
         "oneway_designations": oneway_designations if isinstance(oneway_designations, dict) else {"count": 0, "items": []},
@@ -421,6 +348,12 @@ def agent_status(agent_job_id):
         out["reply_error"] = st.get("reply_error")
         if isinstance(st.get("oneway_designations"), dict):
             out["oneway_designations"] = st.get("oneway_designations")
+        if isinstance(st.get("abst_compare"), dict):
+            out["abst_compare"] = st.get("abst_compare")
+        else:
+            ej = _load_job(st.get("engine_job_id"))
+            if isinstance(ej, dict):
+                out["abst_compare"] = ej.get("abst_compare")
     elif status == "error":
         out["error"] = st.get("error")
         out["markdown"] = st.get("markdown", "")
