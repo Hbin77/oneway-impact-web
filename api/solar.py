@@ -170,14 +170,14 @@ RESPONSE_SCHEMA = {
                     "type": "object",
                     "properties": {
                         "from_table": {"type": "string",
-                                       "description": "근거가 된 표/항목 이름."},
+                                       "description": "근거가 된 표/항목 이름(엔진 표 이름 또는 '경찰청 전국일방통행도로표준데이터(참조일 …)')."},
                         "value": {"type": "string",
-                                  "description": "엔진 원문에서 인용한 값(그대로)."},
+                                  "description": "엔진 보고서 또는 지정 현황에서 인용한 값(그대로)."},
                     },
                     "required": ["from_table", "value"],
                     "additionalProperties": False,
                 },
-                "description": "답변을 떠받치는 엔진 표·값 목록. 엔진 markdown에서 그대로 인용.",
+                "description": "답변을 떠받치는 엔진 표·값 목록. 엔진 markdown 또는 지정 현황에서 그대로 인용.",
             },
             "note": {"type": "string",
                      "description": "해석 주의·한계 (엔진 고지사항과 충돌하지 않게)."},
@@ -190,7 +190,7 @@ RESPONSE_SCHEMA = {
 }
 
 
-def structured_reply(job_id: str, markdown: str, question: str) -> dict:
+def structured_reply(job_id: str, markdown: str, question: str, designations_block: str = "") -> dict:
     """
     엔진 완료 마크다운 + 질문을 Solar에 넣어 구조화된 응답을 얻는다.
 
@@ -199,20 +199,26 @@ def structured_reply(job_id: str, markdown: str, question: str) -> dict:
     """
     system = (
         "너는 도로 일방통행 영향도 분석 결과를 읽고 사용자 질문에 답하는 보조 도구다.\n"
-        "유일한 수치 근거는 엔진 보고서(markdown)다. 수치를 바꾸거나 새로 만들지 말고, "
-        "엔진 markdown에서 있는 값만 인용하라.\n"
-        "답변은 한국어로 짧게, 근거는 표 이름과 인용값을 evidence에 적고, "
-        "job_id를 항상 표시하라.\n"
+        "수치 근거는 두 가지다.\n"
+        "① 엔진 보고서(계산 수치의 유일한 근거)\n"
+        "② 기존 공식 일방통행 지정 현황(경찰청 전국일방통행도로표준데이터, 공공데이터포털; 현황·건수·폭·연장·지정연도의 근거)\n"
+        "두 출처를 섞거나 서로의 수치를 바꾸지 마라.\n"
+        "질문이 기존 지정 현황을 묻거나 비교를 요구하면 반드시 ②를 인용하고 evidence.from_table에 '경찰청 전국일방통행도로표준데이터(참조일 YYYY-MM-DD)'라고 적어라.\n"
+        "답변은 한국어로 짧게, 근거는 표 이름과 인용값을 evidence에 적고, job_id를 항상 표시하라.\n"
         "해석 주의(통행시간은 합성 OD 기반 상대 비교, 상권 접근성은 두 축만, 조합은 탐욕 국소해 등)는 "
         "엔진 고지사항을 그대로 따른다.\n"
-        "앞의 '기존 공식 일방통행 지정 현황' 블록은 경찰청 전국일방통행도로표준데이터(공공데이터포털)이며, "
-        "인용 시 evidence.from_table에 그 출처와 참조일을 적고, 엔진 수치와 섞거나 바꾸지 않는다."
     )
     user = (
-        f"## 엔진 보고서 (job_id: {job_id})\n\n{markdown}\n\n"
         f"## 사용자 질문\n\n{question}\n\n"
         "위 보고서를 근거로 질문에 답하라. 위 RESPONSE_SCHEMA에 맞춰 JSON만 반환하라."
     )
+    if designations_block:
+        user = (
+            f"## 기존 공식 일방통행 지정 현황 (경찰청 전국일방통행도로표준데이터, 공공데이터포털, 참조일 2024-11-19)\n\n{designations_block}\n\n"
+            f"## 엔진 보고서 (job_id: {job_id})\n\n{markdown}\n\n"
+            f"## 사용자 질문\n\n{question}\n\n"
+            "위 보고서를 근거로 질문에 답하라. 위 RESPONSE_SCHEMA에 맞춰 JSON만 반환하라."
+        )
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},

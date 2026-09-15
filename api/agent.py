@@ -263,7 +263,6 @@ def _run_solar(agent_job_id, markdown, job_id, question, oneway_designations):
     # 기존 공식 일방통행 지정 현황 요약 블록을 엔진 마크다운 앞에 붙인다.
     # items 전체는 넣지 않는다(컨텍스트 과다·키 노출 우려).
     pre = _designations_summary_block(oneway_designations)
-    enhanced_md = pre + "\n\n" + markdown if pre else markdown
 
     try:
         import solar
@@ -294,7 +293,7 @@ def _run_solar(agent_job_id, markdown, job_id, question, oneway_designations):
         })
         return
 
-    got = solar.structured_reply(job_id, enhanced_md, question)
+    got = solar.structured_reply(job_id, markdown, question, designations_block=pre)
     if not got.get("ok"):
         _save_agent(agent_job_id, {
             "status": "done",
